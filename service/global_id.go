@@ -42,6 +42,6 @@ func (g *GlobalId) CreateId(ctx context.Context, keyPrefix string) (int64, error
 	}
 	// 3. 拼接返回
 	// 3.1 按位运算进行拼接
-	// 3.2 时间戳左移 countBit位
+	// 3.2 时间戳左移 countBit位 再和总数 或运算
 	return timestamp<<g.CountBit | count, err
 }
