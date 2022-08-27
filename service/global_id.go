@@ -28,7 +28,6 @@ func NewGlobalId(countBit uint, rdb *redis.Client) *GlobalId {
 }
 
 // CreateId 生成全局唯一id实现方法
-// @param keyPrefix 用于区分业务
 func (g *GlobalId) CreateId(ctx context.Context, keyPrefix string) (int64, error) {
 	// 1. 生成时间戳
 	timestamp := time.Now().Unix() - g.BeginTime
