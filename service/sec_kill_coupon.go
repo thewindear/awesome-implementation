@@ -7,10 +7,10 @@ import (
     "github.com/go-redis/redis/v9"
     "gorm.io/gorm"
     "implementation-scheme/models"
+    "time"
 )
 
 //var couponLock sync.Map
-var tryLock = &RedisLock{KeyPrefix: "biz_lock:", rdb: rdb}
 
 type ICouponService interface {
     // 秒杀下单方法
@@ -21,6 +21,44 @@ type ICouponService interface {
 type CouponService struct {
     db  *gorm.DB
     rdb *redis.Client
+}
+
+// AddSecKillCoupon 添加优惠券信息
+// 并将库存信息保存至redis中
+func (s CouponService) AddSecKillCoupon(ctx context.Context,
+    shopId uint64, title,
+    subString, rules string,
+    payValue uint64,
+    actualValue int64,
+    couponType, status uint8, stock int64, beginTime, endTime time.Time) error {
+    //保存券信息
+    coupon := &models.Voucher{
+        ShopId:      shopId,
+        Title:       title,
+        SubTitle:    subString,
+        Rules:       rules,
+        PayValue:    payValue,
+        ActualValue: actualValue,
+        Type:        couponType,
+        Status:      status,
+    }
+    secKillVoucher := &models.SecKillVoucher{}
+    return s.db.Transaction(func(tx *gorm.DB) error {
+        err := tx.Create(coupon).Error
+        if err != nil {
+            return err
+        }
+        secKillVoucher.VoucherId = coupon.Id
+        secKillVoucher.Stock = stock
+        secKillVoucher.BeginTime = beginTime
+        secKillVoucher.EndTime = endTime
+        
+        err = tx.Create(secKillVoucher).Error
+        if err != nil {
+            return err
+        }
+        return nil
+    })
 }
 
 func (s CouponService) secKillCoupon(ctx context.Context, couponId uint64, userId uint64) error {
@@ -68,6 +106,7 @@ func (s CouponService) secKillCoupon(ctx context.Context, couponId uint64, userI
     var lockVal = fmt.Sprintf("%d:%d", couponId, userId)
     var lockKey = fmt.Sprintf("order:%s", lockVal)
     // lockValue 一般为线程id但是go语言可以为goroutine id
+    var tryLock = &RedisLock{KeyPrefix: "biz_lock:", rdb: rdb}
     ok, err := tryLock.ReentryLock(ctx, lockKey, lockVal, 3)
     defer tryLock.ReentryUnlock(ctx, lockKey, lockVal)
     if err != nil {
