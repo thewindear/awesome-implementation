@@ -7,6 +7,8 @@ import (
     "github.com/go-redis/redis/v9"
     "gorm.io/gorm"
     "implementation-scheme/models"
+    "log"
+    "strconv"
     "time"
 )
 
@@ -19,9 +21,14 @@ type ICouponService interface {
 
 // CouponService 秒杀下单
 type CouponService struct {
-    db  *gorm.DB
-    rdb *redis.Client
+    db    *gorm.DB
+    rdb   *redis.Client
+    queue chan *models.VoucherOrder
 }
+
+const (
+    SecKillStockKey = "seckill:stock:%d"
+)
 
 // AddSecKillCoupon 添加优惠券信息
 // 并将库存信息保存至redis中
@@ -52,13 +59,77 @@ func (s CouponService) AddSecKillCoupon(ctx context.Context,
         secKillVoucher.Stock = stock
         secKillVoucher.BeginTime = beginTime
         secKillVoucher.EndTime = endTime
-        
+    
         err = tx.Create(secKillVoucher).Error
         if err != nil {
             return err
         }
+        //将秒杀库存放到redis中
+        stockKey := fmt.Sprintf(SecKillStockKey, coupon.Id)
+        s.rdb.Set(ctx, stockKey, secKillVoucher.Stock, -1)
         return nil
     })
+}
+
+func (s CouponService) ListenQueue(ctx context.Context) {
+    for {
+        select {
+        case order := <-s.queue:
+            go func(order *models.VoucherOrder) {
+                log.Printf("listen queue - uid: %d, couponId: %d", order.UserId, order.VoucherId)
+                //6.扣减库存
+                //6.1 这里在高并发情况下会出现超卖的情况
+                err := s.db.Transaction(func(tx *gorm.DB) error {
+                    result := tx.Model(&models.SecKillVoucher{}).
+                        Where("voucher_id = ? and stock > 0", order.VoucherId).
+                        Update("stock", gorm.Expr("stock - ?", 1))
+                    if result.Error != nil || result.RowsAffected == 0 {
+                        return fmt.Errorf("扣减库失败 %s uid:%d, couponId: %d", result.Error, order.UserId, order.VoucherId)
+                    }
+                    //7.创建订单
+                    if err := tx.Create(order).Error; err != nil {
+                        return fmt.Errorf("创建订单失败: %s uid:%d, couponId: %d", err, order.UserId, order.VoucherId)
+                    }
+                    return nil
+                })
+                if err != nil {
+                    log.Println(err)
+                } else {
+                    log.Printf("下单成功: uid:%d, couponId: %d", order.UserId, order.VoucherId)
+                }
+            }(order)
+        case <-ctx.Done():
+            return
+        }
+    }
+}
+
+func (s CouponService) secKillCouponV2(ctx context.Context, couponId int, userId int) (*models.VoucherOrder, error) {
+    //1.执行lua脚本来判断用户和是否下过单
+    result, err := luaAtomicOrder.Run(ctx, s.rdb, []string{}, couponId, userId).Result()
+    if err != nil {
+        return nil, fmt.Errorf("下单失败:%s", err)
+    }
+    //2.判断是否为1库存不足
+    flag, _ := result.(int64)
+    switch flag {
+    case 1:
+        //3.库存不足
+        return nil, errors.New(strconv.Itoa(couponId) + "库存不足")
+    case 2:
+        //4.判断是否为2已下单
+        return nil, errors.New(strconv.Itoa(userId) + "用户已下过单")
+    default:
+        //5.下单成功
+        //5.1 生成订单id
+        //5.2 创建订单
+        order := &models.VoucherOrder{
+            UserId:    uint64(userId),
+            VoucherId: uint64(couponId),
+        }
+        //5.2 异步下单
+        return order, err
+    }
 }
 
 func (s CouponService) secKillCoupon(ctx context.Context, couponId uint64, userId uint64) error {

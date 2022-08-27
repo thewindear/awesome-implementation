@@ -1,9 +1,9 @@
 package service
 
 import (
+    "implementation-scheme/models"
     "implementation-scheme/utils"
     "log"
-    "sync"
     "testing"
     "time"
 )
@@ -30,21 +30,9 @@ func TestSecKillCoupon(t *testing.T) {
 
 func TestConcurrentSecKillCoupon(t *testing.T) {
     service := &CouponService{rdb: rdb, db: db}
-    wg := sync.WaitGroup{}
-    wg.Add(300)
-    for i := 0; i < 300; i++ {
-        go func() {
-            defer wg.Done()
-            err := service.secKillCoupon(ctx, 7, utils.RandId())
-            if err != nil {
-                t.Logf("下单失败: %s", err)
-            } else {
-                t.Log("下单成功")
-            }
-        }()
-    }
-    wg.Wait()
-    t.Log("test done")
+    ConcurrenceFn(300, func() error {
+        return service.secKillCoupon(ctx, 7, utils.RandId())
+    })
 }
 
 // 新增券优惠券库存
@@ -61,4 +49,29 @@ func TestAddCouponStock(t *testing.T) {
     } else {
         t.Log("创建券成功")
     }
+}
+
+func TestSecKillCouponV2(t *testing.T) {
+    var couponService = &CouponService{rdb: rdb, db: db}
+    uid := utils.RandIdInt()
+    _, err := couponService.secKillCouponV2(ctx, 10, uid)
+    if err != nil {
+        t.Error(err)
+    } else {
+        t.Log("下单成功")
+    }
+}
+
+func TestSecKillCouponV2Concurrent(t *testing.T) {
+    var couponService = &CouponService{rdb: rdb, db: db, queue: make(chan *models.VoucherOrder, 1024)}
+    ConcurrenceFn(300, func() error {
+        uid := utils.RandIdInt()
+        order, err := couponService.secKillCouponV2(ctx, 10, uid)
+        if err != nil {
+            return err
+        }
+        couponService.queue <- order
+        return nil
+    })
+    couponService.ListenQueue(ctx)
 }
