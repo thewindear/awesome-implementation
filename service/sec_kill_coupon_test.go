@@ -45,12 +45,3 @@ func TestConcurrentSecKillCoupon(t *testing.T) {
     wg.Wait()
     t.Log("test done")
 }
-
-func TestUseRedisLua(t *testing.T) {
-    var tryLock2 = &RedisLock{KeyPrefix: "biz_lock:", rdb: rdb}
-    ok, err := tryLock2.Lock(ctx, "order:abcdefg222", "abcdefg", 20)
-    t.Log(ok)
-    t.Log(err)
-    tryLock2.Unlock(ctx, "order:abcdefg222", "abcdefg")
-    //defer tryLock.Unlock(ctx, "order:abcdefg", "abcdefg")
-}

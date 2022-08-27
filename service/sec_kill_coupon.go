@@ -67,6 +67,7 @@ func (s CouponService) secKillCoupon(ctx context.Context, couponId uint64, userI
     // 5.2 使用redis分布式锁来实现加锁
     var lockVal = fmt.Sprintf("%d:%d", couponId, userId)
     var lockKey = fmt.Sprintf("order:%s", lockVal)
+    // lockValue 一般为线程id但是go语言可以为goroutine id
     ok, err := tryLock.Lock(ctx, lockKey, lockVal, 3)
     defer tryLock.Unlock(ctx, lockKey, lockVal)
     if err != nil {

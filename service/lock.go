@@ -8,10 +8,56 @@ import (
 )
 
 var (
-    luaRefresh = redis.NewScript(`if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("pexpire", KEYS[1], ARGV[2]) else return 0 end`)
     //使用lua完成释放操作
     luaRelease = redis.NewScript(`if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`)
-    luaPTTL    = redis.NewScript(`if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("pttl", KEYS[1]) else return -3 end`)
+    //可重入锁释放
+    luaRetryUnlock = redis.NewScript(`
+local key = KEYS[1];
+local threadId = ARGV[1];
+local releaseTime = ARGV[2];
+
+-- 判断当前锁是否还是被自己持有
+if (redis.call('HEXISTS', key, threadId) == 0) then
+    return nil;
+end;
+
+-- 是自己的锁 则重入次数-1
+local count = redis.call('HINCRBY', key, threadId, -1);
+-- 判断是否重入次数为0
+if (count > 0) then
+    -- 大于0说明还有方法在加锁，重置有效期然后返回
+    redis.call('EXPIRE', key, releaseTime)
+    return nil;
+else -- 所有方法都释放完锁可以删除锁
+    redis.call('DEL', key)
+    return nil
+end;
+`)
+    //可重入锁lua脚本实现
+    luaRetryLock = redis.NewScript(`
+local key = KEYS[1]; -- 锁的key
+local threadId = ARGV[1]; -- 线程id标识
+local releaseTime = ARGV[2]; --释放时间
+
+if (redis.call('exists', key) == 0) then
+    -- 不存在设置锁的的线程id
+    redis.call('hset', key, threadId, '1');
+    -- 设置过期时间
+    redis.call('expire', key, releaseTime);
+    return 1;
+end
+
+-- 锁已经存在时，判断threadId是否为自己
+if (redis.call('hexists', key, threadId) == 1) then
+    -- 不存在，获取锁，重入次数 +1
+    redis.call('hincrby', key, threadId, '1');
+    -- 设置有效期
+    redis.call('expire', key, releaseTime);
+    return 1; -- 返回结果
+end
+-- 代码走到这里说明获取的锁不是自己的获取锁失败
+return 0;
+`)
 )
 
 // ILock 基于redis实现的锁
@@ -26,6 +72,27 @@ type RedisLock struct {
 }
 
 var _ ILock = &RedisLock{}
+
+// RetryLock 可重入锁
+func (l *RedisLock) RetryLock(ctx context.Context, key string, val interface{}, expire int) (bool, error) {
+    res, err := luaRetryLock.Run(ctx, l.rdb, []string{l.KeyPrefix + key}, val, expire).Result()
+    if err != nil {
+        return false, err
+    }
+    if res.(int64) == 1 {
+        return true, nil
+    }
+    return false, nil
+}
+
+// RetryUnlock 可重入锁释放锁，先要将计数-1直到为0时才删除key
+func (l *RedisLock) RetryUnlock(ctx context.Context, key string, val interface{}) error {
+    _, err := luaRetryUnlock.Run(ctx, l.rdb, []string{l.KeyPrefix + key}, val).Result()
+    if err != nil {
+        return err
+    }
+    return nil
+}
 
 func (l *RedisLock) Lock(ctx context.Context, key string, val interface{}, expire int) (bool, error) {
     return rdb.SetNX(ctx, l.KeyPrefix+key, val, time.Second*time.Duration(expire)).Result()
