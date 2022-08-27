@@ -10,7 +10,7 @@ import (
 )
 
 //var couponLock sync.Map
-var tryLock = &RedisLock{KeyPrefix: "lock:", rdb: rdb}
+var tryLock = &RedisLock{KeyPrefix: "biz_lock:", rdb: rdb}
 
 type ICouponService interface {
     // 秒杀下单方法
@@ -68,7 +68,7 @@ func (s CouponService) secKillCoupon(ctx context.Context, couponId uint64, userI
     var lockVal = fmt.Sprintf("%d:%d", couponId, userId)
     var lockKey = fmt.Sprintf("order:%s", lockVal)
     ok, err := tryLock.Lock(ctx, lockKey, lockVal, 3)
-    defer tryLock.UnLock(ctx, lockKey)
+    defer tryLock.Unlock(ctx, lockKey, lockVal)
     if err != nil {
         return fmt.Errorf("操作失败: %s", err)
     }
