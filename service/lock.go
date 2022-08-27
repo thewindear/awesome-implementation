@@ -11,7 +11,7 @@ var (
     //使用lua完成释放操作
     luaRelease = redis.NewScript(`if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`)
     //可重入锁释放
-    luaRetryUnlock = redis.NewScript(`
+    luaReentryUnlock = redis.NewScript(`
 local key = KEYS[1];
 local threadId = ARGV[1];
 local releaseTime = ARGV[2];
@@ -34,7 +34,7 @@ else -- 所有方法都释放完锁可以删除锁
 end;
 `)
     //可重入锁lua脚本实现
-    luaRetryLock = redis.NewScript(`
+    luaReentryLock = redis.NewScript(`
 local key = KEYS[1]; -- 锁的key
 local threadId = ARGV[1]; -- 线程id标识
 local releaseTime = ARGV[2]; --释放时间
@@ -73,9 +73,9 @@ type RedisLock struct {
 
 var _ ILock = &RedisLock{}
 
-// RetryLock 可重入锁
-func (l *RedisLock) RetryLock(ctx context.Context, key string, val interface{}, expire int) (bool, error) {
-    res, err := luaRetryLock.Run(ctx, l.rdb, []string{l.KeyPrefix + key}, val, expire).Result()
+// ReentryLock 可重入锁
+func (l *RedisLock) ReentryLock(ctx context.Context, key string, val interface{}, expire int) (bool, error) {
+    res, err := luaReentryLock.Run(ctx, l.rdb, []string{l.KeyPrefix + key}, val, expire).Result()
     if err != nil {
         return false, err
     }
@@ -85,9 +85,9 @@ func (l *RedisLock) RetryLock(ctx context.Context, key string, val interface{}, 
     return false, nil
 }
 
-// RetryUnlock 可重入锁释放锁，先要将计数-1直到为0时才删除key
-func (l *RedisLock) RetryUnlock(ctx context.Context, key string, val interface{}) error {
-    _, err := luaRetryUnlock.Run(ctx, l.rdb, []string{l.KeyPrefix + key}, val).Result()
+// ReentryUnlock 可重入锁释放锁，先要将计数-1直到为0时才删除key
+func (l *RedisLock) ReentryUnlock(ctx context.Context, key string, val interface{}) error {
+    _, err := luaReentryUnlock.Run(ctx, l.rdb, []string{l.KeyPrefix + key}, val).Result()
     if err != nil {
         return err
     }

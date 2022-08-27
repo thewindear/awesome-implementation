@@ -29,8 +29,8 @@ func TestRedisLock(t *testing.T) {
 
 func TestRetryLock(t *testing.T) {
     var retryLock = &RedisLock{KeyPrefix: "biz_lock2:", rdb: rdb}
-    ok, err := retryLock.RetryLock(ctx, "order:20220901", "20220901", 100)
-    defer retryLock.RetryUnlock(ctx, "order:20220901", "20220901")
+    ok, err := retryLock.ReentryLock(ctx, "order:20220901", "20220901", 100)
+    defer retryLock.ReentryUnlock(ctx, "order:20220901", "20220901")
     if err != nil {
         log.Println(err)
     } else {
@@ -40,8 +40,8 @@ func TestRetryLock(t *testing.T) {
 }
 
 func retryLock2Fn(rdbLock *RedisLock, t *testing.T) {
-    ok, err := rdbLock.RetryLock(ctx, "order:20220901", "20220901", 100)
-    defer rdbLock.RetryUnlock(ctx, "order:20220901", "20220901")
+    ok, err := rdbLock.ReentryLock(ctx, "order:20220901", "20220901", 100)
+    defer rdbLock.ReentryUnlock(ctx, "order:20220901", "20220901")
     if err != nil {
         log.Println(err)
     } else {
