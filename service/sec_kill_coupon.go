@@ -71,6 +71,64 @@ func (s CouponService) AddSecKillCoupon(ctx context.Context,
     })
 }
 
+// ConsumerOrder 获取异步消息然后消费
+func (s CouponService) ConsumerOrder(ctx context.Context) {
+    // 1. 获取消息中的队列订单信息
+    // 2. 判断消息获取是否成功
+    // 2.1 如果获取失败谙有没有消息，继续下次循环
+    // 3 如果获取成功 下单
+    // 4 ack确认
+    var count = 0
+    s.rdb.XGroupCreate(ctx, "stream.orders", "g1", "0")
+    for {
+        cmd := s.rdb.XReadGroup(ctx, &redis.XReadGroupArgs{
+            Group:    "g1",
+            Consumer: "g1-c1",
+            Streams:  []string{"stream.orders", ">"},
+            Count:    1,
+            Block:    time.Second,
+            NoAck:    false,
+        })
+        streamRes, err := cmd.Result()
+        if err == redis.Nil {
+            if count >= 10 {
+                break
+            }
+            time.Sleep(time.Millisecond * 20)
+            count += 1
+            continue
+        }
+        userId, _ := strconv.Atoi(streamRes[0].Messages[0].Values["userId"].(string))
+        voucherId, _ := strconv.Atoi(streamRes[0].Messages[0].Values["voucherId"].(string))
+        messageId := streamRes[0].Messages[0].ID
+        
+        //创建订单
+        err = s.db.Transaction(func(tx *gorm.DB) error {
+            //6.扣减库存
+            //6.1 这里在高并发情况下会出现超卖的情况
+            result := tx.Model(&models.SecKillVoucher{}).
+                Where("stock > 0").
+                Update("stock", gorm.Expr("stock - ?", 1))
+            if result.Error != nil || result.RowsAffected == 0 {
+                return fmt.Errorf("扣减库失败 %s", result.Error)
+            }
+            //7.创建订单
+            
+            order := &models.VoucherOrder{
+                UserId:    uint64(userId),
+                VoucherId: uint64(voucherId),
+            }
+            if err = tx.Create(order).Error; err != nil {
+                return fmt.Errorf("创建订单失败: %s", err)
+            }
+            //确认消息
+            s.rdb.XAck(ctx, "stream.orders", "g1", messageId)
+            log.Println("创建订单成功")
+            return nil
+        })
+    }
+}
+
 func (s CouponService) ListenQueue(ctx context.Context) {
     for {
         select {
@@ -101,6 +159,27 @@ func (s CouponService) ListenQueue(ctx context.Context) {
         case <-ctx.Done():
             return
         }
+    }
+}
+
+func (s CouponService) secKillCouponV3(ctx context.Context, couponId int, userId int) error {
+    //1.执行lua脚本来判断用户和是否下过单
+    result, err := luaAtomicOrder.Run(ctx, s.rdb, []string{}, couponId, userId).Result()
+    if err != nil {
+        return fmt.Errorf("下单失败:%s", err)
+    }
+    //2.判断是否为1库存不足
+    flag, _ := result.(int64)
+    switch flag {
+    case 1:
+        //3.库存不足
+        return errors.New(strconv.Itoa(couponId) + "库存不足")
+    case 2:
+        //4.判断是否为2已下单
+        return errors.New(strconv.Itoa(userId) + "用户已下过单")
+    default:
+        //5. 异步下单 已经将数据发送至异步队列所以这里直接返回nil即可，另一个线程去队列中读取 然后下单即可
+        return nil
     }
 }
 

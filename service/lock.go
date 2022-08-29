@@ -64,6 +64,8 @@ return 0;
 local voucherId = ARGV[1]
 -- 用户id
 local userId = ARGV[2]
+-- 订单id
+-- local orderId = ARGV[3]
 
 -- 2.数据key
 -- 2.1 库存key
@@ -85,6 +87,11 @@ end
 -- 3.3 没下过单 那么扣减库存添加 用户id进指定set集合中
 redis.call('INCRBY', stockKey, -1)
 redis.call('SADD', orderKey, userId)
+
+-- 3.4 发送消息到队列中，xadd stream.orders * k1 v1 k2 v2
+-- redis.call('xadd', 'stream.orders', 'NOMKSTREAM', '*', 'userId', userId, 'voucherId', voucherId, 'id', orderId)
+redis.call('xadd', 'stream.orders', 'NOMKSTREAM', '*', 'userId', userId, 'voucherId', voucherId)
+
 -- 下单成功
 return 0
 `)

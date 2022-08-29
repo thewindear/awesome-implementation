@@ -75,3 +75,19 @@ func TestSecKillCouponV2Concurrent(t *testing.T) {
     })
     couponService.ListenQueue(ctx)
 }
+
+func TestSecKillCouponV3Concurrent(t *testing.T) {
+    var couponService = &CouponService{rdb: rdb, db: db, queue: make(chan *models.VoucherOrder, 1024)}
+    uid := utils.RandIdInt()
+    err := couponService.secKillCouponV3(ctx, 10, uid)
+    if err != nil {
+        t.Error(err)
+    } else {
+        t.Log("下单成功，等待异步处理")
+    }
+}
+
+func TestAsyncConsumerOrder(t *testing.T) {
+    var couponService = &CouponService{rdb: rdb, db: db, queue: make(chan *models.VoucherOrder, 1024)}
+    couponService.ConsumerOrder(ctx)
+}
