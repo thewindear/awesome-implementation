@@ -18,7 +18,66 @@ type BlogService struct {
 
 const (
     likeKey = "blog:liked:%d"
+    feedKey = "feed:%d"
 )
+
+func (b BlogService) MessageBox(ctx context.Context, userId int64, lastId int64, offset int64) (blogs []string, nextLastId int64, nextOffset int64) {
+    key := fmt.Sprintf(feedKey, userId)
+    // 1.查询收件箱
+    // ZREVRANGEBYSCORE test:sortedset 2 0 withscores limit 1 3
+    if lastId == 0 {
+        lastId = 1661797999 //time.Now().Unix()
+        offset = 0
+    }
+    blogsZ := b.rdb.ZRevRangeByScoreWithScores(ctx, key, &redis.ZRangeBy{
+        Min:    "0",
+        Max:    fmt.Sprintf("%d", lastId),
+        Offset: offset,
+        Count:  2,
+    }).Val()
+    log.Println(offset)
+    if len(blogsZ) == 0 {
+        nextLastId = lastId
+        nextOffset = offset
+        return
+    }
+    var minTime = 0.0
+    for _, blogId := range blogsZ {
+        blogs = append(blogs, blogId.Member.(string))
+        if minTime == blogId.Score {
+            nextOffset += 1
+        } else {
+            minTime = blogId.Score
+            nextOffset = 1
+        }
+    }
+    nextLastId = int64(minTime)
+    return
+}
+
+func (b BlogService) SaveBlog(ctx context.Context, blog *models.Blog) error {
+    err := b.db.WithContext(ctx).Model(blog).Create(blog).Error
+    if err != err {
+        return err
+    }
+    //1.查询笔记作者的所有粉丝
+    var fansList []*models.Follow
+    err = b.db.Model(&models.Follow{}).
+        Select("user_id").
+        Where("follow_user_id = ?", blog.UserId).Find(&fansList).Error
+    if err != nil {
+        return err
+    }
+    //2.推送笔记id给所有粉丝
+    for _, fans := range fansList {
+        fansFeedKey := fmt.Sprintf(feedKey, fans.UserId)
+        b.rdb.ZAdd(ctx, fansFeedKey, redis.Z{
+            Score:  float64(time.Now().Unix()),
+            Member: blog.Id,
+        })
+    }
+    return nil
+}
 
 func (b BlogService) UserLikeBlog(ctx context.Context, userId, blogId uint64) (err error) {
     // 1. 判断用户是否已点赞

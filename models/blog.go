@@ -3,7 +3,7 @@ package models
 import "time"
 
 type Blog struct {
-    Id         uint64
+    Id         uint64 `gorm:"primaryKey"`
     ShopId     uint64
     UserId     uint64
     Title      string
