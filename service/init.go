@@ -12,6 +12,7 @@ import (
 )
 
 var rdb *redis.Client
+var rdbCluster *redis.ClusterClient
 var ctx = context.Background()
 var db *gorm.DB
 var sqlDB *sql.DB
@@ -19,6 +20,12 @@ var sqlDB *sql.DB
 const dsn = "root:Kb7DPGVY98Dv64S97M73gW7GKZjCusje@tcp(127.0.0.1:3306)/test?charset=utf8mb4&parseTime=True&loc=Local"
 
 func init() {
+    rdbCluster = redis.NewFailoverClusterClient(&redis.FailoverOptions{
+        MasterName:       "mymaster",
+        SentinelAddrs:    []string{":6390", ":6391", ":6392"},
+        SentinelPassword: "123456",
+        Password:         "123456",
+    })
     rdb = redis.NewClient(&redis.Options{
         Addr:         "localhost:6379",
         Password:     "",
