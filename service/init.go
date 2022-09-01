@@ -28,7 +28,7 @@ func init() {
     })
     rdb = redis.NewClient(&redis.Options{
         Addr:         "localhost:6379",
-        Password:     "",
+        Password:     "123456",
         DB:           0,
         ReadTimeout:  time.Second * 10,
         WriteTimeout: time.Second * 10,
